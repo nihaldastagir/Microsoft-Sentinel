@@ -1,0 +1,63 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "workspace": {
+            "type": "String"
+        }
+    },
+    "resources": [
+        {
+            "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/797e7ba7-0703-48a0-830f-6e2a3ea35a9d')]",
+            "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/797e7ba7-0703-48a0-830f-6e2a3ea35a9d')]",
+            "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+            "kind": "Scheduled",
+            "apiVersion": "2023-12-01-preview",
+            "properties": {
+                "displayName": "Daily data ingestion exceeded 90 GB",
+                "description": "Fires when billable data ingested into this workspace since 00:00 UTC today exceeds 90 GB. Runs hourly because the Usage table is populated in hourly aggregates.",
+                "severity": "Medium",
+                "enabled": false,
+                "query": "let DailyLimitGB = 90.0;\r\nlet TodayUsage = Usage\r\n    | where TimeGenerated >= startofday(now())\r\n    | where IsBillable == true;\r\nlet IngestedToday = toscalar(TodayUsage | summarize sum(Quantity) / 1000.0);\r\nTodayUsage\r\n| summarize DataTypeGB = round(sum(Quantity) / 1000.0, 2) by DataType\r\n| top 5 by DataTypeGB desc\r\n| serialize Rank = row_number()\r\n| summarize TopDataTypes = make_bag(bag_pack(tostring(Rank), strcat(DataType, \" : \", DataTypeGB, \" GB\")))\r\n| extend Ingested_GB = round(IngestedToday, 2), DailyGB_Limit = DailyLimitGB\r\n| where Ingested_GB > DailyGB_Limit\r\n| project Ingested_GB, DailyGB_Limit, TopDataTypes",
+                "queryFrequency": "PT1H",
+                "queryPeriod": "P1D",
+                "triggerOperator": "GreaterThan",
+                "triggerThreshold": 0,
+                "suppressionDuration": "PT5H",
+                "suppressionEnabled": false,
+                "startTimeUtc": null,
+                "tactics": [],
+                "techniques": [],
+                "subTechniques": [],
+                "alertRuleTemplateName": null,
+                "incidentConfiguration": {
+                    "createIncident": true,
+                    "groupingConfiguration": {
+                        "enabled": true,
+                        "reopenClosedIncident": false,
+                        "lookbackDuration": "P1D",
+                        "matchingMethod": "AnyAlert",
+                        "groupByEntities": [],
+                        "groupByAlertDetails": [],
+                        "groupByCustomDetails": []
+                    }
+                },
+                "eventGroupingSettings": {
+                    "aggregationKind": "SingleAlert"
+                },
+                "alertDetailsOverride": {
+                    "alertDisplayNameFormat": "Daily ingestion at {{Ingested_GB}} GB, over the {{DailyGB_Limit}} GB limit.",
+                    "alertDynamicProperties": []
+                },
+                "customDetails": {
+                    "Ingested_GB": "Ingested_GB",
+                    "DailyGB_Limit": "DailyGB_Limit",
+                    "TopDataTypes": "TopDataTypes"
+                },
+                "entityMappings": null,
+                "sentinelEntitiesMappings": null,
+                "templateVersion": null
+            }
+        }
+    ]
+}
