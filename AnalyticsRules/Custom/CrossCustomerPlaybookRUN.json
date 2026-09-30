@@ -1,0 +1,90 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "workspace": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the Microsoft Sentinel workspace. Sentinel Repositories supplies this automatically."
+      }
+    },
+    "additionalAllowedSubscriptionIds": {
+      "type": "array",
+      "defaultValue": [],
+      "metadata": {
+        "description": "Optional. Other subscription IDs whose playbooks this workspace may legitimately run, such as a Lumen-hosted shared-playbook subscription. The workspace's own subscription is always allowed."
+      }
+    }
+  },
+  "variables": {
+    "ruleId": "d116a6ef-9b2f-43d2-8ea5-735ec0d689cc",
+    "allowedSubs": "[union(createArray(subscription().subscriptionId), parameters('additionalAllowedSubscriptionIds'))]",
+    "queryBody": "\nSentinelHealth\n| where ingestion_time() > ago(1h)\n| where OperationName in (\"Automation rule run\", \"Playbook was triggered\")\n| extend Playbooks = iff(OperationName == \"Automation rule run\", ExtendedProperties.TriggeredPlaybooks, pack_array(bag_pack(\"WorkflowId\", SentinelResourceId)))\n| mv-expand pb = Playbooks\n| extend RawPlaybookId = tostring(pb.WorkflowId)\n| extend PlaybookId = tolower(RawPlaybookId), PlaybookName = extract(@\"(?i)/workflows/([^/]+)$\", 1, RawPlaybookId)\n| extend PlaybookSub = extract(@\"/subscriptions/([^/]+)/\", 1, PlaybookId)\n| where isnotempty(PlaybookSub) and PlaybookSub !in~ (ownSubs)\n| extend IncidentNumber = tostring(ExtendedProperties.IncidentNumber), TriggeredBy = tostring(ExtendedProperties.TriggeredByName.UserPrincipalName)\n| project TimeGenerated, OperationName, SentinelResourceName, PlaybookName, PlaybookId, PlaybookSub, IncidentNumber, TriggeredBy, Status\n"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "apiVersion": "2025-03-01",
+      "name": "[concat(parameters('workspace'), '/Microsoft.SecurityInsights/', variables('ruleId'))]",
+      "kind": "Scheduled",
+      "properties": {
+        "displayName": "Playbook from another customer's subscription was run in this workspace",
+        "description": "Flags any automation rule run or manual incident run in this workspace where the playbook lives in a different subscription from the workspace. This can mean one customer's incident data was sent to another customer's playbook. The workspace's own subscription is filled in automatically at deployment. Requires Microsoft Sentinel health monitoring for automation. Manual runs on alerts or entities aren't recorded in SentinelHealth, so they aren't covered.",
+        "severity": "High",
+        "enabled": true,
+        "query": "[concat('let ownSubs = dynamic(', string(variables('allowedSubs')), ');', variables('queryBody'))]",
+        "queryFrequency": "PT1H",
+        "queryPeriod": "PT2H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Playbook {{PlaybookName}} from another subscription was run in this workspace",
+          "alertDescriptionFormat": "Playbook {{PlaybookName}} (subscription {{PlaybookSub}}) was triggered on incident {{IncidentNumber}} in this workspace."
+        },
+        "customDetails": {
+          "RunType": "OperationName",
+          "PlaybookSubscription": "PlaybookSub",
+          "IncidentNumber": "IncidentNumber",
+          "TriggeredBy": "TriggeredBy"
+        },
+        "entityMappings": [
+          {
+            "entityType": "AzureResource",
+            "fieldMappings": [
+              {
+                "identifier": "ResourceId",
+                "columnName": "PlaybookId"
+              }
+            ]
+          },
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "FullName",
+                "columnName": "TriggeredBy"
+              }
+            ]
+          }
+        ],
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": false,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        }
+      }
+    }
+  ]
+}
